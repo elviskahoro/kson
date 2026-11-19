@@ -1,0 +1,77 @@
+# Builds the KSON CLI native image and publishes it as a GitHub release in this fork.
+#
+# To cut a release when upstream (kson-org/kson) tags a new version:
+#   1. git fetch upstream --tags && git push origin vX.Y.Z   (a pushed vX.Y.Z tag triggers this run)
+#   or run manually:  rwx run .rwx/release.yml --init tag=vX.Y.Z
+# The tag must exist in this fork, since the build clones it from here.
+#
+# Targets: linux-amd64 only. RWX runs Linux, so macos-arm64 and windows cannot be built here.
+on:
+  cli:
+    init:
+      tag: ${{ event.git.ref }}
+  github:
+    push:
+      if: ${{ event.git.ref =~ '^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$' }}
+      init:
+        tag: ${{ event.git.ref }}
+
+base:
+  image: ubuntu:24.04
+  config: rwx/base 1.0.0
+
+tasks:
+  - key: system-packages
+    run: |
+      sudo apt-get update
+      sudo apt-get install -y build-essential zlib1g-dev curl unzip
+      sudo apt-get clean
+
+  - key: code
+    call: git/clone 2.4.1
+    with:
+      repository: https://github.com/elviskahoro/kson.git
+      ref: ${{ init.tag }}
+      github-token: ${{ github.token }}
+
+  - key: gh-cli
+    call: github/install-cli 1.1.1
+
+  - key: build-cli
+    use: [system-packages, code]
+    run: |
+      ./gradlew --no-daemon -Prelease=true :tooling:cli:packageReleaseArchive
+      mkdir -p dist
+      cp build/release-artifacts/native/kson-cli-amd64-linux.tar.gz dist/
+      (cd dist && sha256sum kson-cli-amd64-linux.tar.gz > kson-cli-amd64-linux.tar.gz.sha256)
+    outputs:
+      artifacts:
+        - key: cli-linux-amd64
+          path: dist
+
+  - key: smoke-test
+    use: build-cli
+    run: |
+      (cd dist && sha256sum -c kson-cli-amd64-linux.tar.gz.sha256)
+      mkdir -p smoke && tar -xzf dist/kson-cli-amd64-linux.tar.gz -C smoke
+      printf 'name: kson\nitems:\n  - 1\n  - 2\n' > smoke/sample.kson
+      ./smoke/kson --help
+      ./smoke/kson format smoke/sample.kson
+      ./smoke/kson validate smoke/sample.kson
+      ./smoke/kson json smoke/sample.kson
+      ./smoke/kson yaml smoke/sample.kson
+
+  - key: publish
+    use: [smoke-test, gh-cli]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ init.tag }}
+    run: |
+      tag="${TAG#refs/tags/}"
+      files=(dist/kson-cli-amd64-linux.tar.gz dist/kson-cli-amd64-linux.tar.gz.sha256)
+      if gh release view "$tag" --repo elviskahoro/kson >/dev/null 2>&1; then
+        gh release upload "$tag" "${files[@]}" --clobber --repo elviskahoro/kson
+      else
+        gh release create "$tag" "${files[@]}" --title "KSON CLI $tag" --repo elviskahoro/kson \
+          --notes "Prebuilt KSON CLI built from upstream $tag with RWX."
+      fi
