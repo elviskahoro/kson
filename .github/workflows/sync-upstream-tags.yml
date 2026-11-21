@@ -1,0 +1,46 @@
+# Watches upstream (kson-org/kson) for a new release tag and builds the macOS CLI for it.
+# Upstream tags do not contain this fork's workflow files, so a tag push alone cannot trigger a
+# build; this scheduled job copies the newest upstream tag into the fork and dispatches the build.
+#
+# The Linux build still runs in RWX: rwx run .rwx/release.yml --init tag=vX.Y.Z
+name: sync-upstream-tags
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find newest upstream tag without a fork release
+        id: find
+        run: |
+          git remote add upstream https://github.com/kson-org/kson.git
+          git fetch upstream --tags --force --quiet
+          tag=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+          echo "newest upstream tag: $tag"
+          if [ -z "$tag" ]; then exit 0; fi
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null | grep -q 'arm64-macos.tar.gz$'; then
+            echo "$tag already has a macOS asset"
+          else
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push tag to fork and dispatch macOS build
+        if: steps.find.outputs.tag != ''
+        run: |
+          tag='${{ steps.find.outputs.tag }}'
+          git push origin "refs/tags/$tag" 2>&1 || true
+          gh workflow run release-macos.yml --repo "$GITHUB_REPOSITORY" -f tag="$tag"
