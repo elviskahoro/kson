@@ -64,7 +64,8 @@ tasks:
   - key: publish
     use: [smoke-test, gh-cli]
     env:
-      GH_TOKEN: ${{ github.token }}
+      # github.token is read-only; creating releases needs the private GitHub App in the kson-release vault
+      GH_TOKEN: ${{ vaults.kson-release.github-apps.rwx-kson-release.token }}
       TAG: ${{ init.tag }}
     run: |
       tag="${TAG#refs/tags/}"
