@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   build-macos:
-    runs-on: macos-14 # Apple Silicon (arm64)
+    runs-on: macos-latest # Apple Silicon (arm64)
     env:
       TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
