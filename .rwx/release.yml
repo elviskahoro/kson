@@ -1,26 +1,47 @@
-# Builds the KSON CLI native image and publishes it as a GitHub release in this fork.
+# Builds the KSON CLI native image (linux-amd64) and publishes it to a GitHub release in this fork.
 #
-# To cut a release when upstream (kson-org/kson) tags a new version:
-#   1. git fetch upstream --tags && git push origin vX.Y.Z   (a pushed vX.Y.Z tag triggers this run)
-#   or run manually:  rwx run .rwx/release.yml --init tag=vX.Y.Z
-# The tag must exist in this fork, since the build clones it from here.
+# Runs automatically every day: if the newest upstream (kson-org/kson) vX.Y.Z tag has no linux asset
+# on this fork's release yet, it builds and publishes it; otherwise the run is a quick no-op.
+# macOS is built by .github/workflows/release-macos.yml (RWX only runs Linux).
 #
-# Targets: linux-amd64 only. RWX runs Linux, so macos-arm64 and windows cannot be built here.
+# Manual run for a specific tag:  rwx run .rwx/release.yml --init tag=vX.Y.Z
 on:
   cli:
     init:
       tag: ${{ event.git.ref }}
-  github:
-    push:
-      if: ${{ event.git.ref =~ '^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$' }}
+  cron:
+    - key: release-linux-daily
+      schedule: '47 6 * * *'
       init:
-        tag: ${{ event.git.ref }}
+        tag: ''
 
 base:
   image: ubuntu:24.04
   config: rwx/base 1.0.0
 
 tasks:
+  # Decide what to build. Writes values: tag, sha, build ("true" or "false").
+  - key: detect
+    env:
+      TAG: ${{ init.tag }}
+    run: |
+      tag="${TAG#refs/tags/}"
+      explicit=true
+      if [ -z "$tag" ] || [ "$tag" = "main" ]; then
+        explicit=false
+        tag=$(git ls-remote --tags --refs https://github.com/kson-org/kson.git 'v*' \
+          | sed 's#.*refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$' | sort -V | tail -n1)
+      fi
+      sha=$(git ls-remote https://github.com/kson-org/kson.git "refs/tags/$tag^{}" "refs/tags/$tag" | tail -n1 | cut -f1)
+      build=true
+      if [ "$explicit" = false ] && curl -fsS "https://api.github.com/repos/elviskahoro/kson/releases/tags/$tag" 2>/dev/null | grep -q 'amd64-linux.tar.gz"'; then
+        build=false
+      fi
+      echo "tag=$tag sha=$sha build=$build"
+      echo "$tag" > $RWX_VALUES/tag
+      echo "$sha" > $RWX_VALUES/sha
+      echo "$build" > $RWX_VALUES/build
+
   - key: system-packages
     run: |
       sudo apt-get update
@@ -30,8 +51,8 @@ tasks:
   - key: code
     call: git/clone 2.4.1
     with:
-      repository: https://github.com/elviskahoro/kson.git
-      ref: ${{ init.tag }}
+      repository: https://github.com/kson-org/kson.git
+      ref: ${{ tasks.detect.values.tag }}
       github-token: ${{ github.token }}
 
   - key: gh-cli
@@ -39,9 +60,12 @@ tasks:
 
   - key: build-cli
     use: [system-packages, code]
+    env:
+      BUILD: ${{ tasks.detect.values.build }}
     run: |
-      ./gradlew --no-daemon -Prelease=true :tooling:cli:packageReleaseArchive
       mkdir -p dist
+      if [ "$BUILD" != "true" ]; then echo "Nothing new to build"; exit 0; fi
+      ./gradlew --no-daemon -Prelease=true :tooling:cli:packageReleaseArchive
       cp build/release-artifacts/native/kson-cli-amd64-linux.tar.gz dist/
       (cd dist && sha256sum kson-cli-amd64-linux.tar.gz > kson-cli-amd64-linux.tar.gz.sha256)
     outputs:
@@ -51,7 +75,10 @@ tasks:
 
   - key: smoke-test
     use: build-cli
+    env:
+      BUILD: ${{ tasks.detect.values.build }}
     run: |
+      if [ "$BUILD" != "true" ]; then echo "Nothing to test"; exit 0; fi
       (cd dist && sha256sum -c kson-cli-amd64-linux.tar.gz.sha256)
       mkdir -p smoke && tar -xzf dist/kson-cli-amd64-linux.tar.gz -C smoke
       printf 'name: kson\nitems:\n  - 1\n  - 2\n' > smoke/sample.kson
@@ -66,13 +93,18 @@ tasks:
     env:
       # github.token is read-only; creating releases needs the private GitHub App in the kson-release vault
       GH_TOKEN: ${{ vaults.kson-release.github-apps.rwx-kson-release.token }}
-      TAG: ${{ init.tag }}
+      TAG: ${{ tasks.detect.values.tag }}
+      SHA: ${{ tasks.detect.values.sha }}
+      BUILD: ${{ tasks.detect.values.build }}
     run: |
-      tag="${TAG#refs/tags/}"
+      if [ "$BUILD" != "true" ]; then echo "Nothing to publish"; exit 0; fi
       files=(dist/kson-cli-amd64-linux.tar.gz dist/kson-cli-amd64-linux.tar.gz.sha256)
-      if gh release view "$tag" --repo elviskahoro/kson >/dev/null 2>&1; then
-        gh release upload "$tag" "${files[@]}" --clobber --repo elviskahoro/kson
+      # make sure the tag exists in the fork, pointing at the upstream commit
+      gh api "repos/elviskahoro/kson/git/ref/tags/$TAG" >/dev/null 2>&1 \
+        || gh api -X POST repos/elviskahoro/kson/git/refs -f ref="refs/tags/$TAG" -f sha="$SHA"
+      if gh release view "$TAG" --repo elviskahoro/kson >/dev/null 2>&1; then
+        gh release upload "$TAG" "${files[@]}" --clobber --repo elviskahoro/kson
       else
-        gh release create "$tag" "${files[@]}" --title "KSON CLI $tag" --repo elviskahoro/kson \
-          --notes "Prebuilt KSON CLI built from upstream $tag with RWX."
+        gh release create "$TAG" "${files[@]}" --title "KSON CLI $TAG" --repo elviskahoro/kson \
+          --verify-tag --notes "Prebuilt KSON CLI built from upstream $TAG."
       fi
