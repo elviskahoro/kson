@@ -56,10 +56,10 @@ tasks:
       mkdir -p smoke && tar -xzf dist/kson-cli-amd64-linux.tar.gz -C smoke
       printf 'name: kson\nitems:\n  - 1\n  - 2\n' > smoke/sample.kson
       ./smoke/kson --help
-      ./smoke/kson format smoke/sample.kson
-      ./smoke/kson validate smoke/sample.kson
-      ./smoke/kson json smoke/sample.kson
-      ./smoke/kson yaml smoke/sample.kson
+      ./smoke/kson format -i smoke/sample.kson
+      ./smoke/kson validate -i smoke/sample.kson
+      ./smoke/kson json -i smoke/sample.kson
+      ./smoke/kson yaml -i smoke/sample.kson
 
   - key: publish
     use: [smoke-test, gh-cli]

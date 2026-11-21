@@ -1,0 +1,61 @@
+# Builds the KSON CLI native image on macOS (Apple Silicon) and attaches it to the GitHub release
+# for the tag. Complements .rwx/release.yml, which builds linux-amd64 (RWX cannot build macOS).
+#
+# Triggered by pushing a vX.Y.Z tag, or manually: gh workflow run release-macos.yml -f tag=vX.Y.Z
+name: release-macos
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and release (e.g. v0.4.0)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-14 # Apple Silicon (arm64)
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build native CLI archive
+        run: ./gradlew --no-daemon -Prelease=true :tooling:cli:packageReleaseArchive
+
+      - name: Smoke test
+        run: |
+          archive=$(ls build/release-artifacts/native/kson-cli-*.tar.gz)
+          mkdir smoke && tar -xzf "$archive" -C smoke
+          printf 'name: kson\nitems:\n  - 1\n  - 2\n' > smoke/sample.kson
+          ./smoke/kson --help
+          ./smoke/kson format -i smoke/sample.kson
+          ./smoke/kson validate -i smoke/sample.kson
+          ./smoke/kson json -i smoke/sample.kson
+          ./smoke/kson yaml -i smoke/sample.kson
+
+      - name: Publish to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd build/release-artifacts/native
+          for f in kson-cli-*.tar.gz; do shasum -a 256 "$f" > "$f.sha256"; done
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" kson-cli-* --clobber
+          else
+            gh release create "$TAG" kson-cli-* --title "KSON CLI $TAG" \
+              --notes "Prebuilt KSON CLI built from upstream $TAG."
+          fi
