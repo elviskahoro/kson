@@ -1,3 +1,4 @@
+import sys
 import pytest
 import typing
 from kson import *
@@ -708,3 +709,15 @@ def test_embed_rule_result_success_direct_construction():
 def test_embed_rule_result_failure_direct_construction():
     failure = EmbedRuleResult.Failure("something went wrong")
     assert failure.message() == "something went wrong"
+
+
+def test_module_level_object_does_not_crash_at_exit():
+    import subprocess
+
+    code = (
+        "from kson import TranspileOptions\n"
+        "OPTIONS = TranspileOptions.Json(retain_embed_tags=False)\n"
+        "def unused(): pass\n"
+    )
+    result = subprocess.run([sys.executable, "-c", code])
+    assert result.returncode == 0
