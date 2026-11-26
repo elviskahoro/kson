@@ -4,7 +4,7 @@ A command-line interface for working with KSON files.
 
 ## Building
 
-To build a native executable, run:
+Prebuilt binaries are available (see [Prebuilt releases](#prebuilt-releases-this-fork)). To build a native executable, run:
 
 ```bash
 ./gradlew :tooling:cli:buildNativeImage
@@ -21,6 +21,7 @@ The CLI provides several commands for working with KSON files:
 - `json` or `yaml` - Convert KSON files to other formats
 
 Run the CLI with `--help` for more information on available commands and options.
+
 ## Prebuilt releases (this fork)
 
 Prebuilt `kson-cli-<arch>-<os>.tar.gz` archives (with `.sha256` files) are published on this fork's
