@@ -54,7 +54,11 @@ vm_args[0].ignoreUnrecognized = 1  # JNI_TRUE
 if lib.JNI_CreateJavaVM(jvm_ptr, ffi.cast("void **", env_ptr), vm_args) != 0:
     raise Exception("failed to load kson dynamic library")
 
-jvm = ffi.gc(jvm_ptr[0], lambda x: x[0].DestroyJavaVM(x))
+# Intentionally never destroyed: wrapped Java objects are finalized with
+# ffi.gc, and at interpreter shutdown the JVM handle could otherwise be
+# collected first, making later finalizers call into a destroyed JVM
+# (segfault). The OS reclaims the JVM when the process exits.
+jvm = jvm_ptr[0]
 
 ###############
 # JNI Helpers #

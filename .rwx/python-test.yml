@@ -1,0 +1,28 @@
+# Builds the native KSON library and runs the lib-python tests.
+# Run: rwx run .rwx/python-test.yml --init ref=<branch>
+on:
+  cli:
+    init:
+      ref: ${{ event.git.ref }}
+
+base:
+  image: ubuntu:24.04
+  config: rwx/base 1.0.0
+
+tasks:
+  - key: system-packages
+    run: |
+      sudo apt-get update
+      sudo apt-get install -y build-essential zlib1g-dev curl unzip python3 python3-venv
+      sudo apt-get clean
+
+  - key: code
+    call: git/clone 2.4.1
+    with:
+      repository: https://github.com/elviskahoro/kson.git
+      ref: ${{ init.ref }}
+      github-token: ${{ github.token }}
+
+  - key: python-test
+    use: [system-packages, code]
+    run: ./gradlew --no-daemon -Prelease=true :lib-python:copyNativeArtifacts :lib-python:test
