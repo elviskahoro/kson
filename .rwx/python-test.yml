@@ -25,4 +25,4 @@ tasks:
 
   - key: python-test
     use: [system-packages, code]
-    run: ./gradlew --no-daemon :lib-python:copyNativeArtifacts :lib-python:test
+    run: ./gradlew --no-daemon -Prelease=true :lib-python:copyNativeArtifacts :lib-python:test
